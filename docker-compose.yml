@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  parking-pricing-app:
+    build: .
+    container_name: parking_pricing_dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
