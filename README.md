@@ -1,156 +1,192 @@
-# 🚗 Dynamic Pricing & Smart Rerouting Engine for Urban Parking Lots
+# Dynamic Pricing & Smart Rerouting for Urban Parking Lots
+
+> Capstone project for **Summer Analytics 2025** (Consulting & Analytics Club × Pathway).
+> A learning project that explores how parking prices could respond to demand — built on
+> **synthetic data**, not live parking feeds, and **not a production system**.
+> There is no public live deployment; run it locally with the steps below.
 
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.63.0-FF4B4B.svg)](https://streamlit.io/)
-[![Dockerized](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B.svg)](https://streamlit.io/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
 [![Capstone](https://img.shields.io/badge/Capstone-Summer%20Analytics%202025-green.svg)](#)
 
-Capstone Project submission for **Summer Analytics 2025**
-By **Ankit Kumar** (Consulting & Analytics Club × Pathway)
+## What it is
 
----
+Urban parking demand shifts through the day — with occupancy, queues, nearby traffic,
+special events, and what neighbouring lots charge. Static prices cannot react to any of
+that. This project implements three pricing models side by side, plus a spatial
+rerouting engine that suggests nearby alternatives when a lot fills up, all wrapped in
+an interactive Streamlit dashboard.
 
-## 📌 Executive Summary
+Everything runs on a generated dataset for **14 fictional urban parking lots**
+(Downtown Central Hub, Financial District North, Tech Park Plaza, and eleven more),
+so the focus stays on the pricing logic itself rather than on real-world data
+collection.
 
-Urban parking scarcity is a major contributor to inner-city traffic congestion, increased carbon emissions, and driver inefficiency. Traditional static pricing models fail to adapt to live fluctuations in parking demand, local traffic congestion, special events, or nearby competitor pricing.
+## How it works
 
-This repository implements a **production-ready, real-time dynamic pricing and smart rerouting system** for 14 urban parking lots. Built with a modular Python architecture and a Streamlit interactive web dashboard, the engine combines 3 pricing models and an automated spatial rerouting algorithm.
+### Data — synthetic, by design
 
----
+`src/data_generator.py` generates the dataset (`generate_parking_dataset()`,
+500 records by default, seed 42). Each record carries a timestamp (15-minute steps
+from 2025-07-01), lot, capacity, occupancy, queue length, nearby traffic level
+(`low` / `medium` / `high`), a special-day flag, vehicle type (`car` / `bike` /
+`truck`), base price, a nearby competitor price, and the lot's latitude/longitude.
 
-## 🏗️ System Architecture
+The dashboard (`app.py`) first tries to read `dataset.csv`; if it is missing, it
+generates the dataset and writes `dataset.csv`. You can also regenerate it directly:
 
-```
-                                  ┌──────────────────────────┐
-                                  │   Real-Time Data Feed    │
-                                  │ (Occupancy, Queue, etc.) │
-                                  └─────────────┬────────────┘
-                                                │
-                                                ▼
-                                  ┌──────────────────────────┐
-                                  │    Data Preprocessor     │
-                                  │  (Normalization & Map)   │
-                                  └─────────────┬────────────┘
-                                                │
-                 ┌──────────────────────────────┼──────────────────────────────┐
-                 │                              │                              │
-                 ▼                              ▼                              ▼
-    ┌─────────────────────────┐   ┌───────────────────────────┐  ┌──────────────────────────┐
-    │  Model 1: Linear        │   │  Model 2: Demand-Based    │  │  Model 3: Competitive    │
-    │  P_{t+1} = P_t + alpha  │   │  Multi-Factor Score (D)   │  │  Blended Geo-Distance    │
-    └────────────┬────────────┘   └─────────────┬─────────────┘  └─────────────┬────────────┘
-                 │                              │                              │
-                 └──────────────────────────────┼──────────────────────────────┘
-                                                │
-                                                ▼
-                                  ┌──────────────────────────┐
-                                  │   Smart Rerouting Engine │
-                                  │    (Haversine Metric)    │
-                                  └─────────────┬────────────┘
-                                                │
-                                                ▼
-                                  ┌──────────────────────────┐
-                                  │ Streamlit Web Dashboard  │
-                                  │   & Interactive Maps     │
-                                  └──────────────────────────┘
+```bash
+python3 src/data_generator.py
 ```
 
----
+### Model 1 — Baseline linear pricing
 
-## 📊 Models Implemented
+The simplest possible response to crowding: price rises with the occupancy ratio.
 
-### 1. Model 1 – Baseline Linear Pricing
-Price increases based on capacity utilization ratio:
-$$P_{t+1} = P_t + \alpha \cdot \left(\frac{\text{Occupancy}}{\text{Capacity}}\right)$$
+```
+P(t+1) = P(t) + alpha * (Occupancy / Capacity)
+```
 
-### 2. Model 2 – Multi-Factor Demand-Based Dynamic Pricing
-Calculates a multi-variate composite demand score $D$:
-$$D = \alpha \cdot \left(\frac{\text{Occupancy}}{\text{Capacity}}\right) + \beta \cdot \text{QueueLength} - \gamma \cdot \text{TrafficLevel} + \delta \cdot \text{IsSpecialDay} + \epsilon \cdot \text{VehicleTypeWeight}$$
+Default `alpha = 1.5` in `src/pricing_engine.py` (`linear_pricing`), with utilisation
+clamped to [0, 1].
 
-Price is updated by centering normalized demand and capping bounded multipliers:
-$$P_t = P_{\text{base}} \cdot \left(1 + \lambda \cdot (\hat{D} - 0.5)\right) \quad \text{where } P_t \in [0.5 \cdot P_{\text{base}},\, 2.0 \cdot P_{\text{base}}]$$
+### Model 2 — Multi-factor demand-based pricing
 
-### 3. Model 3 – Geo-Distance Competitive Pricing
-Blends internal demand-based price with surrounding competitor parking rates:
-$$P_{\text{comp}} = (1 - w_{\text{comp}}) \cdot P_{\text{demand}} + w_{\text{comp}} \cdot P_{\text{competitor}}$$
+A composite demand score combines five factors:
 
-### 4. Smart Rerouting Engine
-When a target lot reaches saturation capacity ($\ge 90\%$ occupancy), the system calculates Haversine spatial proximity and available spaces to recommend top alternative parking lots.
+```
+D = alpha * (Occupancy / Capacity) + beta * QueueLength
+    - gamma * TrafficLevel + delta * IsSpecialDay + epsilon * VehicleTypeWeight
+```
 
----
+Default weights: `alpha = 1.0`, `beta = 0.6`, `gamma = 0.4`, `delta = 0.7`,
+`epsilon = 0.8`. Traffic maps to `low = 1`, `medium = 2`, `high = 3`; vehicle
+weights are `car = 1.0`, `bike = 0.5`, `truck = 1.5`.
 
-## 📂 Project Structure
+The score is normalised (divided by 10, clipped to [0, 1]) and turned into a price
+bounded to [0.5×, 2.0×] the base price:
+
+```
+P = P(base) * (1 + lambda * (D_normalised - 0.5)),   lambda = 0.5 by default
+```
+
+### Model 3 — Competitive pricing
+
+The demand-based price is blended with the price charged by nearby competitors:
+
+```
+P(comp) = (1 - w) * P(demand) + w * P(competitor),   w = 0.3 by default
+```
+
+### Smart rerouting — Haversine distance
+
+When a lot is nearly full (the dashboard flags lots at **≥ 90% occupancy**),
+`src/rerouting.py` (`find_alternative_lots`) ranks nearby lots by Haversine
+great-circle distance combined with available space. Only lots under 95% full are
+suggested, within a 5 km default radius, with the top 3 returned.
+
+## The dashboard
+
+`streamlit run app.py` opens five modules (sidebar):
+
+- **Real-Time Dashboard** — lot KPIs, a parking-lot map, and a lot-level inspector.
+  ("Real-time" here means the simulated data stream in the app, not live city data.)
+- **Model Comparison & Analytics** — Plotly charts comparing Models 1, 2, and 3.
+- **Smart Rerouting Engine** — pick a lot, set a search radius, and see the top
+  alternative lots when it fills up.
+- **Live Simulation Stream** — step-by-step simulated price updates over time.
+- **Mathematical Formulations** — the equations above, as written in the code.
+
+Model weights (α, β, γ, δ, ε) are adjustable from the dashboard sidebar.
+
+## Project structure
 
 ```
 .
-├── app.py                                    # Streamlit Production Web Dashboard
-├── dataset.csv                               # Generated Synthetic Urban Parking Dataset
-├── Dockerfile                                # Multi-stage Docker Container Configuration
-├── docker-compose.yml                        # Container Orchestration Spec
-├── Dynamic_Pricing_Ankit_Kumar_SA2025.ipynb  # Comprehensive Jupyter Notebook Analysis
-├── README.md                                 # Project Documentation & Guide
-├── requirements.txt                          # Python Dependencies Spec
+├── app.py                                    # Streamlit dashboard
+├── dataset.csv                               # Generated synthetic dataset
+├── Dockerfile                                # Python 3.12-slim image, serves on port 8501
+├── docker-compose.yml                        # Single-service compose setup
+├── Dynamic_Pricing_Ankit_Kumar_SA2025.ipynb  # Jupyter notebook analysis
+├── README.md                                 # This file
+├── requirements.txt                          # Python dependencies
 ├── src/
 │   ├── __init__.py
-│   ├── data_generator.py                    # Dataset Generation Module
-│   ├── pricing_engine.py                    # Core Models 1, 2, and 3 Implementations
-│   └── rerouting.py                         # Spatial Haversine Rerouting Engine
+│   ├── data_generator.py                    # Synthetic dataset generator (14 lots)
+│   ├── pricing_engine.py                    # Models 1, 2, and 3
+│   └── rerouting.py                         # Haversine rerouting engine
 └── tests/
-    └── test_pricing.py                       # Unit & Integration Pytest Suite
+    └── test_pricing.py                       # Pytest suite
 ```
 
----
+## Tech stack
 
-## 🚀 Quick Start & Installation
+From `requirements.txt` and the `Dockerfile`:
 
-### Option 1: Running Locally with Python
+- **Python 3.12** (`python:3.12-slim` in the Dockerfile)
+- **Streamlit** — dashboard (no version pinned; `streamlit>=1.30.0` in requirements)
+- **pandas, NumPy** — data handling
+- **Plotly, Matplotlib, Seaborn, Bokeh** — charts and analysis
+- **pytest** — tests
+- **Docker / Docker Compose** — containerised run
 
-1. **Clone Repository & Install Dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Run it locally
 
-2. **Generate / Refresh Dataset:**
-   ```bash
-   python3 src/data_generator.py
-   ```
+```bash
+git clone https://github.com/Thunderdoc/Dynamic-Pricing-SummerAnalytics2025.git
+cd Dynamic-Pricing-SummerAnalytics2025
+pip install -r requirements.txt
+```
 
-3. **Launch Web Application:**
-   ```bash
-   streamlit run app.py
-   ```
-   Open `http://localhost:8501` in your browser.
+Generate the dataset (optional — the app generates it on first run if it is missing):
 
-4. **Run Automated Test Suite:**
-   ```bash
-   python3 -m pytest
-   ```
+```bash
+python3 src/data_generator.py
+```
 
----
+Launch the dashboard:
 
-### Option 2: Running with Docker / Docker Compose
+```bash
+streamlit run app.py
+```
 
-1. **Build & Run Container:**
-   ```bash
-   docker-compose up --build
-   ```
-2. Open `http://localhost:8501` in your browser.
+Then open <http://localhost:8501> in your browser.
 
----
+### With Docker
 
-## 💻 Web Dashboard Features
+```bash
+docker-compose up --build
+```
 
-- **📊 Real-Time Network Overview:** Live KPIs, parking lot map, and lot-level inspector.
-- **📈 Model Comparison & Analytics:** Interactive Plotly scatter and bar plots comparing Model 1, Model 2, and Model 3 behavior.
-- **🧭 Smart Rerouting Engine:** Real-time alternative lot recommendation with customizable search radius and occupancy simulation.
-- **⚡ Live Simulation Stream:** Step-by-step real-time time-series simulation of pricing adjustments.
-- **📚 Mathematical Formulations:** Detailed LaTeX equations and derivations.
+Then open <http://localhost:8501>. The compose service maps host port 8501 to
+container port 8501.
 
----
+### Run the tests
 
-## ✅ Author
+```bash
+python3 -m pytest
+```
 
-**Ankit Kumar**  
-Capstone Project for:  
-📊 Consulting & Analytics Club × 🧠 Pathway  
-**Summer Analytics 2025**
+The suite in `tests/test_pricing.py` covers dataset generation, linear pricing,
+demand-score and demand-based pricing (including the [0.5×, 2.0×] bounds),
+competitive pricing, and Haversine distance.
+
+## Honest status and limits
+
+- **Capstone / learning project, Summer Analytics 2025.** It is not deployed
+  anywhere, has no real users, and is not connected to any real parking system.
+- **All data is synthetic.** Lot names, coordinates, occupancies, queues, and
+  competitor prices are generated, not observed. Results demonstrate the models,
+  not real parking behaviour.
+- **"Live" / "real-time" in the app means simulated.** Prices update as the
+  simulation steps forward; nothing here reads a live feed.
+- **No screenshots or performance claims are made here**, because none were
+  measured against real data.
+
+## Author
+
+**Ankit Kumar** — Capstone Project for Consulting & Analytics Club × Pathway,
+Summer Analytics 2025.
+
+Built by Thunderdoc.
